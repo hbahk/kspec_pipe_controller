@@ -69,7 +69,7 @@ def kspec_make_tlm(params,image,ofname=None,odir=None):
 
     ta = args.TdfArgs(params=params)
 
-    recipe_name = "make_tlm"
+    recipe_name = "kspec_make_tlm"
 
     # --Start reduce_fflat.F95 section--
 
@@ -188,3 +188,82 @@ def kspec_make_tlm(params,image,ofname=None,odir=None):
     # Report tramline map creation complete
     cpl.core.Msg.info(recipe_name,"Generated tramline map {}".format(tlm_fname.rstrip()))
     
+def _make_tlm_for_kspec(image,tlm,instcode,targs):
+    """
+    Make a tramline map for the K-SPEC instruments. Also create and fill the wavelength HDU using the PREDICT_WAVELEN routine.
+
+    Parameters
+    ----------
+    image : Tdfio
+        Tdfio object for the input image frame. Opened for read-only on entry and return.
+    tlm : Tdfio
+        Tdfio object for the output tramline map frame. The tramline and wavelength data are written to this file on return. File is open on entry and return.
+    instcode : TdfioInstType
+        The instrument type in the format of the TdfioInstType enum. Retrievable from the instrument property of Tdfio objects.
+    targs : TdfArgs
+        The method arguments.
+    
+    Notes
+    -----
+    Uses routine "LOCATE_TRACES" to find and provide quadratic trace lines
+    found within the image data of IM_ID. Then maps these traces to
+    the fibers of the instrument using instrument specific "Identify Fiber"
+    routine. Calculates an estimate of the FWHM of the fiber PSFs via the
+    EXTRACT_PROFILE_SLICE routine. Creates a wavelength array using the
+    PREDICT_WAVELEN() routine. All derived data is written to the TLM_ID
+    data object.
+    Note: This routine has evolved over a long history and there are
+    still a few aspects that are present for historical reasons and
+    may need updating in the future.
+    """
+    status = 0
+    # TODO: turn tlm_id into a proper Tdfio object and return it?
+    _twodfdr.make_tlm_other_mod.make_tlm_other(image.fid,tlm.fid,instcode,targs.sid,status)
+    
+
+def _predict_wavelen_for_kspec(image, tlm, instcode, targs)
+    """
+    Compute wavelength at the centre of each pixel for K-SPEC instrument.
+
+    Parameters
+    ----------
+    image : Tdfio
+        The input image frame.
+    tlm : Tdfio
+        The tramline map frame.
+    instcode : TdfioInstType
+        The instrument type.
+    targs : TdfArgs
+        The method arguments.
+
+    Returns
+    -------
+    wavelen : ndarray
+        The predicted wavelength at the pixel centres of each fibre.
+
+    Notes
+    -----
+Purpose:
+   Compute wavelength at the centre of each pixel for 6dF, AAOmega MOS and
+   spiral IFU, HERMES or SAMI instruments.
+Description:
+   Calculation is done using various instrument parameters, certain FITS
+   header keyword values and SDS arguments.
+   Notice the accuracy of the returned wavelengths is NOT well understood.
+   It is assumed NOT to be critical as they are normally calibrated later
+   by the arc frame.
+      ! arguments
+   INTEGER,INTENT(IN) :: IM_ID          ! Image frame identifier. Used only to
+                                        ! obtain certain FITS header values
+   INTEGER,INTENT(IN) :: NX             ! Number of spectral pixels
+   INTEGER,INTENT(IN) :: NF             ! Number of fibres in tram-line map
+   INTEGER,INTENT(IN) :: NY             ! Number of spatial pixels
+   REAL,   INTENT(IN) :: TLMA(NX,NF)    ! Tramline map data
+   REAL,   INTENT(OUT):: WAVELEN(NX,NF) ! Predicted Wavelength (nanometres) at
+                                        ! the pixel centres of each fibre
+   INTEGER,INTENT(IN) :: ARGS           ! SDS identifier of structure containing
+                                        ! method arguments, see above
+   INTEGER,INTENT(INOUT):: STATUS       ! Global status
+   """
+    wavelen = None
+    return wavelen
