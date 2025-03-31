@@ -62,3 +62,7 @@ conda activate twodfdr
     # AM_LDFLAGS = -static-libgfortran -static-libgcc # comment out these lines
     ```
     This is to avoid errors when building `pgplot` submodule with `gfortran`, `gcc`, `gxx` installed by conda.
+
+Hmm… this isn’t working well.
+
+Also, now that I’m continuously modifying the 2dfdr build, it feels pointless to keep 2dfdr as a submodule in this repository. If I’ve already decided to adjust the original 2dfdr code, then there’s little reason to keep trying to build KSPEC’s Python functions without touching it.
