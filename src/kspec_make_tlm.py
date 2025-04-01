@@ -327,20 +327,23 @@ def make_tlm_other(image, tram, instcode, args):
     # Get image dimensions
     n_pix = np.int32(0)  # will hold X-dimension (dispersion length)
     n_spatial = np.int32(0)  # will hold Y-dimension (spatial length)
-    _twodfdr.TDFIO_GETSIZE(im_id, n_pix, n_spatial, status)
+    _twodfdr.tdfio_getsize(im_id, n_pix, n_spatial, status)
+    
     # Allocate arrays for image and variance
     image_data = np.zeros((n_pix, n_spatial), dtype=np.float32)
     variance_data = np.zeros((n_pix, n_spatial), dtype=np.float32)
+    
     # Read image and variance into arrays
-    _twodfdr.TDFIO_IMAGE_READ(im_id, image_data, n_pix, n_spatial, status)
-    _twodfdr.TDFIO_VAR_READ(im_id, variance_data, n_pix, n_spatial, status)
+    _twodfdr.tdfio_image_read(im_id, image_data, n_pix, n_spatial, status)
+    _twodfdr.tdfio_var_read(im_id, variance_data, n_pix, n_spatial, status)
+    
     # Read fiber type information for all possible fibers (returns actual count in n_fibers)
     max_fibers = (
         1000  # assume an upper bound for maximum number of fibers (MAX__NFIBRES)
     )
     fiber_types = np.empty(max_fibers, dtype="S1")  # 1-character codes for each fiber
     n_fibers = np.int32(0)
-    _twodfdr.TDFIO_FIBRES_READ_TYPES(
+    _twodfdr.tdfio_fibres_read_types(
         im_id, np.int32(max_fibers), fiber_types, n_fibers, status
     )
     n_fibers = int(n_fibers)  # convert to Python int for easier use
@@ -354,7 +357,7 @@ def make_tlm_other(image, tram, instcode, args):
             0
         ]  # SPECTID value
         # Initialize HERMES coefficients for this spectrograph (e.g., field distortions)
-        _twodfdr.HERMES_COEFF_INIT(spectrograph_id, status)
+        _twodfdr.hermes_coeff_init(spectrograph_id, status)
 
     # Prepare tramline map array (n_pix x n_fibers), initially filled with 0
     tlm_array = np.zeros((int(n_pix), n_fibers), dtype=np.float32)
@@ -362,13 +365,14 @@ def make_tlm_other(image, tram, instcode, args):
     # Determine which fibers are expected to have traces:
     # Use Fortran routine to classify fibers (Yes=has trace, No=definitely none, Maybe=potentially)
     fiber_trace_status = np.zeros(n_fibers, dtype=np.int32)
-    _twodfdr.FIBRE_TYPE_TRACE_STATUS(
+    _twodfdr.fibre_type_trace_status(
         instcode, fiber_types, np.int32(n_fibers), fiber_trace_status
     )
+    
     # Count fiber categories for later logic
-    yes_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.TRISTATE__YES)
-    maybe_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.TRISTATE__MAYBE)
-    no_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.TRISTATE__NO)
+    yes_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.tristate__yes)
+    maybe_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.tristate__maybe)
+    no_fibers = np.count_nonzero(fiber_trace_status == _twodfdr.tristate__no)
 
     # Step 1: Locate fiber traces in the image
     # Allocate arrays for trace finding outputs
@@ -386,6 +390,7 @@ def make_tlm_other(image, tram, instcode, args):
         int(n_spatial), dtype=np.float32
     )  # PK_POSN (detected peak Y positions)
     n_traces = np.int32(0)
+    
     # Set trace finding parameters from args
     sparse_fibs = args.getl(
         "SPARSE_FIBS", False
@@ -396,6 +401,7 @@ def make_tlm_other(image, tram, instcode, args):
     quick_and_dirty = args.getl(
         "QAD_PKSEARCH", False
     )  # force quick peak search method if True
+    
     # Choose peak search method: 0 = standard (Echelle), 1 = alternative (all local peaks)
     pk_search_method = (
         1
@@ -403,6 +409,7 @@ def make_tlm_other(image, tram, instcode, args):
         or instcode in (TdfioInstType.AAOMEGA_IFU, TdfioInstType.AAOMEGA_KOALA)
         else 0
     )
+    
     # Determine distortion modeling flag (DODIST): turn off for known highly distorted instruments
     do_distortion = True
     if (
@@ -411,7 +418,7 @@ def make_tlm_other(image, tram, instcode, args):
     ):
         do_distortion = False
     # Invoke the trace finding routine (LOCATE_TRACES)
-    _twodfdr.LOCATE_TRACES(
+    _twodfdr.locate_traces(
         image_data,
         n_pix,
         n_spatial,
@@ -428,6 +435,7 @@ def make_tlm_other(image, tram, instcode, args):
         do_distortion,
         status,
     )
+    
     n_traces = int(n_traces)  # convert to Python int
     if status != 0:
         raise RuntimeError("Trace location failed (status={})".format(int(status)))
@@ -438,6 +446,7 @@ def make_tlm_other(image, tram, instcode, args):
     # Allocate peak heights and widths arrays for each found trace
     peak_heights = np.zeros(n_traces, dtype=np.float32)
     peak_widths = np.zeros(n_traces, dtype=np.float32)
+    
     # Determine an approximate intensity at each peak position from the spatial slice
     for i in range(n_traces):
         # Fortran used 1-based indexing and int(pos+0.5); in Python, convert to 0-based index
@@ -446,16 +455,19 @@ def make_tlm_other(image, tram, instcode, args):
         if idx >= len(spatial_slice):
             idx = len(spatial_slice) - 1
         peak_heights[i] = spatial_slice[idx]
+        
     # Set PSF type (point-spread function shape) from args and external PSF module
     psf_type = args.getc("PSF_TYPE", "GAUSS")
     ExternalPsf.set_type(psf_type)
+    
     # If using complex PSF (e.g., 'C2G2L'), parse its parameters for this image's class
     image_class = image.ndf_class  # e.g., 'MFFFF' for flat field
     if psf_type.upper() == "C2G2L":
         parse_status = 0
         ExternalPsf.parse(args, image_class, parse_status)
+        
     # Call the profile extraction routine to estimate sigma for each peak (assuming GAUSS or chosen PSF)
-    _twodfdr.EXTRACT_PROFILE_SLICE(
+    _twodfdr.extract_profile_slice(
         spatial_slice,
         np.int32(n_spatial),
         peak_positions,
@@ -464,15 +476,18 @@ def make_tlm_other(image, tram, instcode, args):
         peak_widths,
         False,
     )  # last False -> do not plot (as in Fortran .FALSE.)
+    
     # Convert sigma to FWHM for Gaussian (FWHM = 2.35482 * sigma)
     peak_widths *= 2.35482
+    
     # Compute median FWHM across all fibers (MWIDTH)
     median_width = float(np.median(peak_widths[:n_traces]))
+    
     # For KOALA (and potentially SAMI), use wavelet-based block analysis to refine MWIDTH (if enabled)
     if instcode == TdfioInstType.AAOMEGA_KOALA:
         nblocks = 40  # KOALA has 40 IFU bundles
         mwidth2 = np.float32(0.0)
-        _twodfdr.BLOCK_SIGMA_ESTIMATE(
+        _twodfdr.block_sigma_estimate(
             spatial_slice,
             np.int32(n_spatial),
             np.int32(n_fibers),
@@ -491,19 +506,21 @@ def make_tlm_other(image, tram, instcode, args):
     match_vector = np.zeros(
         2 * n_fibers, dtype=np.int32
     )  # fiber -> trace mapping (0 if no match)
+    
     # Determine if we can skip complex identification:
     if (n_traces == yes_fibers) or (n_traces == yes_fibers + maybe_fibers):
         # If the number of found traces matches the expected fibers in use (including "maybe"),
         # assume a one-to-one mapping in order of position.
         # Sort peak positions to align with fiber numbering (usually fibers are ordered by position).
         sorted_idx = np.argsort(peak_positions[:n_traces])
+        
         # Assign each found trace to the next fiber that should have a trace
         fiber_idx = 0
         for trace_idx in sorted_idx:
             # Skip fibers that officially have no trace (dead/parked) when assigning
             while (
                 fiber_idx < n_fibers
-                and fiber_trace_status[fiber_idx] == _twodfdr.TRISTATE__NO
+                and fiber_trace_status[fiber_idx] == _twodfdr.tristate__no
             ):
                 fiber_idx += 1
             if fiber_idx >= n_fibers:
@@ -523,7 +540,7 @@ def make_tlm_other(image, tram, instcode, args):
             dead_mask = np.zeros(
                 (400,), dtype=bool
             )  # assume at most 400 fibers for 2dF
-            _twodfdr.AAOMEGA2DF_DEADFIBRES(
+            _twodfdr.aaomega2df_deadfibres(
                 plate_id, dead_mask, np.int32(dead_mask.size)
             )
             # Update fiber_types: label any dead fibers as 'F' (no trace) [oai_citation_attribution:21‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=CALL%20TDFIO_KYWD_READ_CHAR,implies%20gives%20no%20trace%20ENDDO)
@@ -533,9 +550,9 @@ def make_tlm_other(image, tram, instcode, args):
             # Get nominal fiber-to-fiber gap values for this plate/spectrograph
             spectro_id = image.key_read("SPECTID", TdfioKeyType.STR)[0]
             gap_values = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.AAOMEGA_NOMINAL_GAPS(spectro_id, gap_values, np.int32(n_fibers))
+            _twodfdr.aaomega_nominal_gaps(spectro_id, gap_values, np.int32(n_fibers))
             # Identify fibers using expected gaps between traces [oai_citation_attribution:22‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20Now%20we%20identify%20the,NF%2CFIB_TYPEV%2CNPKS%2CPK_POSN%2CGAPV%2CMATCHV%2C%26%20MFIB_POSN%2CSTATUS)
-            _twodfdr.IDENT_FIBS_FROM_GAPS(
+            _twodfdr.ident_fibs_from_gaps(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -549,8 +566,8 @@ def make_tlm_other(image, tram, instcode, args):
         elif instcode == TdfioInstType.AAOMEGA_IFU:
             # AAOmega/Spiral IFU: use known nominal gaps for IFU fibers [oai_citation_attribution:23‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20Get%20the%20nominal%20gap,IFU%20fibers.%20CALL%20AAOMEGAIFU_NOMINAL_GAPS%28GAPV%2CNF)
             gap_values = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.AAOMEGAIFU_NOMINAL_GAPS(gap_values, np.int32(n_fibers))
-            _twodfdr.IDENT_FIBS_FROM_GAPS(
+            _twodfdr.aaomegaifu_nominal_gaps(gap_values, np.int32(n_fibers))
+            _twodfdr.ident_fibs_from_gaps(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -571,8 +588,8 @@ def make_tlm_other(image, tram, instcode, args):
                 )
             # Use nominal gaps for KOALA [oai_citation_attribution:25‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20Get%20the%20nominal%20gap,CALL%20KOALA_NOMINAL_GAPS%28GAPV%2CNF)
             gap_values = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.KOALA_NOMINAL_GAPS(gap_values, np.int32(n_fibers))
-            _twodfdr.IDENT_FIBS_FROM_GAPS(
+            _twodfdr.koala_nominal_gaps(gap_values, np.int32(n_fibers))
+            _twodfdr.ident_fibs_from_gaps(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -596,7 +613,7 @@ def make_tlm_other(image, tram, instcode, args):
             # (Replace bad values in spatial_slice with 0 to avoid issues)
             spatial_slice_clean = spatial_slice.copy()
             spatial_slice_clean[np.isnan(spatial_slice_clean)] = 0.0
-            _twodfdr.IDENTAAOMEGASAMI_OLD(
+            _twodfdr.identaaomegasami_old(
                 spatial_slice_clean,
                 np.int32(n_spatial),
                 np.int32(n_traces),
@@ -611,8 +628,8 @@ def make_tlm_other(image, tram, instcode, args):
             # HERMES: allow for "phantom" traces by using a robust gaps matching [oai_citation_attribution:28‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20with%20the%20assumption%20that,NF%2CFIB_TYPEV%2CNPKS%2CPK_POSN%2C%26%20PK_HGTS%2CGAPV%2CMATCHV%2CMFIB_POSN%2CSTATUS)
             spectro_id = image.key_read("SPECTID", TdfioKeyType.STR)[0]
             gap_values = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.HERMES_NOMINAL_GAPS(spectro_id, gap_values, np.int32(n_fibers))
-            _twodfdr.IDENT_FIBS_FROM_GAPS_GIVEN_PHANTOMS(
+            _twodfdr.hermes_nominal_gaps(spectro_id, gap_values, np.int32(n_fibers))
+            _twodfdr.ident_fibs_from_gaps_given_phantoms(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -627,8 +644,8 @@ def make_tlm_other(image, tram, instcode, args):
         elif instcode == TdfioInstType.SIXDF:
             # 6dF: use known fiber gaps for this instrument [oai_citation_attribution:29‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=CASE%28INST_6DF%29%20%21,CALL%20SIXDF_NOMINAL_GAPS%28GAPV%2CNF)
             gap_values = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.SIXDF_NOMINAL_GAPS(gap_values, np.int32(n_fibers))
-            _twodfdr.IDENT_FIBS_FROM_GAPS(
+            _twodfdr.sixdf_nominal_gaps(gap_values, np.int32(n_fibers))
+            _twodfdr.ident_fibs_from_gaps(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -643,11 +660,11 @@ def make_tlm_other(image, tram, instcode, args):
             # TAIPAN: uses an equidistant fiber position model (actually 150 fibers out of 300 slots) [oai_citation_attribution:30‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=CASE%28INST_TAIPAN%29%20%21) [oai_citation_attribution:31‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20Get%20the%20nominal%20gap,CALL%20TDFIO_KYWD_READ_CHAR%28IM_ID%2C%27SPECTID%27%2CSPECTID%2CCMT%2CSTATUS%29%20CALL%20TAIPAN_NOMINAL_FIBPOS%28SPECTID%2CARPV%2CNF)
             spectro_id = image.key_read("SPECTID", TdfioKeyType.STR)[0]
             archived_positions = np.zeros(n_fibers, dtype=np.float32)
-            _twodfdr.TAIPAN_NOMINAL_FIBPOS(
+            _twodfdr.taipan_nominal_fibpos(
                 spectro_id, archived_positions, np.int32(n_fibers)
             )
             match_vector[:] = 0
-            _twodfdr.IDENT_FIBS_FROM_POSNS(
+            _twodfdr.ident_fibs_from_posns(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -666,7 +683,7 @@ def make_tlm_other(image, tram, instcode, args):
             gap_values = np.zeros(n_fibers, dtype=np.float32)
             try:
                 # Attempt to get nominal gaps if a routine exists for this instcode
-                _twodfdr.AAOMEGA_NOMINAL_GAPS(
+                _twodfdr.aaomega_nominal_gaps(
                     image.key_read("SPECTID", TdfioKeyType.STR)[0],
                     gap_values,
                     np.int32(n_fibers),
@@ -674,7 +691,7 @@ def make_tlm_other(image, tram, instcode, args):
             except Exception:
                 # Fallback: assume roughly uniform spacing if unknown instrument
                 gap_values[:] = np.median(np.diff(np.sort(peak_positions[:n_traces])))
-            _twodfdr.IDENT_FIBS_FROM_GAPS(
+            _twodfdr.ident_fibs_from_gaps(
                 np.int32(n_fibers),
                 fiber_types,
                 np.int32(n_traces),
@@ -702,12 +719,12 @@ def make_tlm_other(image, tram, instcode, args):
     # _twodfdr.IDENT_TO_EXTERNAL_FILE(np.int32(n_fibers), tlm_array[int(n_pix)//2, :], status)
 
     # Interpolate across any missing fibers to smooth the tramline map if needed
-    sep_value = _twodfdr.FIBRE_SEP(
+    sep_value = _twodfdr.fibre_sep(
         instcode
     )  # nominal fiber separation in pixels for this instrument
     if instcode == TdfioInstType.TAIPAN:
         # Use specialized interpolation for TAIPAN (non-uniform fiber spacing) [oai_citation_attribution:32‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=SEP%20%3D%20FIBRE_SEP,NX%2CNF%2CTLMA%2CMATCHV%2CARPV%29%20ELSE)
-        _twodfdr.INTERPOLATE_TLMS_TAIPAN(
+        _twodfdr.interpolate_tlms_taipan(
             np.int32(n_pix),
             np.int32(n_fibers),
             tlm_array,
@@ -715,7 +732,7 @@ def make_tlm_other(image, tram, instcode, args):
             archived_positions,
         )
     else:
-        _twodfdr.INTERPOLATE_TLMS(
+        _twodfdr.interpolate_tlms(
             np.int32(n_pix),
             np.int32(n_fibers),
             tlm_array,
@@ -725,7 +742,7 @@ def make_tlm_other(image, tram, instcode, args):
 
     # Step 5: Write results to the output tramline map FITS file
     # Write the tramline map primary data (TLMA array) into the tram file
-    _twodfdr.TDFIO_TLMAP_WRITE(
+    _twodfdr.tdfio_tlmap_write(
         tlm_id, tlm_array, np.int32(n_pix), np.int32(n_fibers), status
     )
     # Determine if we need to generate the wavelength array using PREDICT_WAVELEN
@@ -734,7 +751,7 @@ def make_tlm_other(image, tram, instcode, args):
     if sc_corrector or prf_corrector:
         # Allocate wavelength array and compute predicted wavelengths [oai_citation_attribution:33‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=ALLOCATE,RETURN)
         wave_array = np.zeros((int(n_pix), n_fibers), dtype=np.float32)
-        _twodfdr.PREDICT_WAVELEN(
+        _twodfdr.predict_wavelen( #TODO: change to _predict_wavelen_for_kspec
             im_id,
             np.int32(n_pix),
             np.int32(n_fibers),
@@ -748,11 +765,11 @@ def make_tlm_other(image, tram, instcode, args):
             raise RuntimeError(
                 "Wavelength prediction failed (status={})".format(int(status))
             )
-        _twodfdr.TDFIO_WAVE_WRITE(
+        _twodfdr.tdfio_wave_write(
             tlm_id, wave_array, np.int32(n_pix), np.int32(n_fibers), status
         )
     # Write the median FWHM (MWIDTH) to the tram file header [oai_citation_attribution:34‡file-wxwp4zo9cpegs3cymqwzlr](file://file-WXwP4zo9CpeGs3CYMqWZLR#:~:text=%21%20Write%20FWHM%20estimate%20to,Median%20tramline%20width%20FWHM%3D%27%2CMWIDTH)
-    _twodfdr.TDFIO_KYWD_WRITE_REAL(
+    _twodfdr.tdfio_kywd_write_real(
         tlm_id, "MWIDTH", np.float32(median_width), "Median spatial FWHM", status
     )
 
@@ -765,7 +782,7 @@ def make_tlm_other(image, tram, instcode, args):
                 sigma_map[:, j] = (
                     peak_widths[j] / 2.35482
                 )  # back to sigma as initial guess
-            _twodfdr.SVARPRO_FIT(
+            _twodfdr.svarpro_fit(
                 image_data,
                 np.int32(n_pix),
                 np.int32(n_spatial),
@@ -777,11 +794,11 @@ def make_tlm_other(image, tram, instcode, args):
             trace_no = match_vector[fib_index]
             if trace_no <= 0:
                 sigma_map[:, fib_index] = (
-                    _twodfdr.VAL__BADR
+                    _twodfdr.val__badr
                 )  # fill missing fiber with bad value constant
             else:
                 sigma_map[:, fib_index] = sigma_map[:, trace_no - 1]
-        _twodfdr.TDFIO_TSIG_WRITE(
+        _twodfdr.tdfio_tsig_write(
             tlm_id, sigma_map[:, :n_fibers], np.int32(n_pix), np.int32(n_fibers), status
         )
 
