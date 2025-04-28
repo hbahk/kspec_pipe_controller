@@ -7,15 +7,14 @@ dependencies:
 - numpy
 - astropy
 - ipykernel
-- gfortran_linux-64 =7.5.0
-- gcc_linux-64 =7.5.0
-- gxx_linux-64 =7.5.0
-- libgcc-ng =7.5.0
+- gfortran =8.5.0
+- gcc =8.5.0
+- gxx =8.5.0
 - boost
 - ply
 - libx11-devel-cos7-x86_64
-- tcllib
-- tk
+# - tcllib
+# - tk
 - make
 - meson =1.4.0
 - sphinx
@@ -31,6 +30,9 @@ dependencies:
 - xorg-libx11
 - xorg-libxt
 - xorg-libxext
+- xorg-xproto
+- xorg-xextproto
+- xorg-kbproto
 - libxcb
 - cfitsio
 - wcslib
