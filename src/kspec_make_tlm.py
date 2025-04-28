@@ -141,16 +141,7 @@ def kspec_make_tlm(params, image, ofname=None, odir=None):
     # Call routine appropriate for instrument to create TLM primary & WAVELA
     # All routines write tramline map into Primary HDU and predicted wavelength
     # array into 'WAVELA' HDU of TLM file TLM_ID
-    if instcode == TdfioInstType.GENERIC or instcode == TdfioInstType.GENERIC_IR:
-        TLM.generic(timg, tram, ta)
-    else:
-        # We call the old TLM.twodf solely for the predicted
-        # wavelength model it generates. For the tramline data itself
-        # we use the TLM.other method
-        if instcode == TdfioInstType.TWODF:
-            TLM.twodf(timg, tram)
-
-        TLM.other(timg, tram, instcode, ta)
+    TLM.other(timg, tram, instcode, ta)
 
     # Read tramline data into array TLM
     # npix, nfib = tram.get_size
