@@ -9,14 +9,15 @@ Try the steps outlined in the [2dfdr README](https://dev.aao.org.au/rds/2dfdr/2d
 make
 make all install
 ```
-If you encounter any issues, please follow the steps below.
-
-## 1. Conda environment
+<details>
+<summary>These were what I had to do</summary>
+<br >
+<!-- ## 1. Conda environment
 ```
 conda env create -n twodfdr --file=conda.yaml
 conda activate twodfdr
 ```
-## 2. Build 2dfdr
+## 2. Build 2dfdr -->
  - Replace a line in `2dfdr/acinclude.m4`
     ```m4
     AC_SUBST([subdirs_xp], ["$subdirs_xp^m4_normalize([$2])"])dnl
@@ -28,7 +29,7 @@ conda activate twodfdr
     ```
     This is to avoid errors when building 2dfdr submodules with `gfortran`, `gcc`, `gxx` installed by conda.
 
- - Fix `update_2dfdr_verfile` in `2dfdr`:
+ <!-- - Fix `update_2dfdr_verfile` in `2dfdr`:
     ```sh
     if [ $# != 1 ]; then
         echo "$0:Usage  $0 <filename>" 1>&2
@@ -45,7 +46,7 @@ conda activate twodfdr
         exit 1
     fi
     ```
-    This correction considers when `2dfdr` is a git submodule of another repository. The original script does not work in this case.
+    This correction considers when `2dfdr` is a git submodule of another repository. The original script does not work in this case. -->
 
  <!-- - Configure `2dfdr`:
     ```sh
@@ -63,6 +64,21 @@ conda activate twodfdr
     ```
     This is to avoid errors when building `pgplot` submodule with `gfortran`, `gcc`, `gxx` installed by conda.
 
-Hmm… this isn’t working well.
+<!-- Hmm… this isn’t working well.
 
-Also, now that I’m continuously modifying the 2dfdr build, it feels pointless to keep 2dfdr as a submodule in this repository. If I’ve already decided to adjust the original 2dfdr code, then there’s little reason to keep trying to build KSPEC’s Python functions without touching it.
+Also, now that I’m continuously modifying the 2dfdr build, it feels pointless to keep 2dfdr as a submodule in this repository. If I’ve already decided to adjust the original 2dfdr code, then there’s little reason to keep trying to build KSPEC’s Python functions without touching it. -->
+
+I successfully built 2dfdr with the root compiler, gcc=8.5.0, gxx=8.5.0, gfortran=8.5.0, with above modifications.
+</details>
+
+# Building the twodfdr Python module
+
+## Construct a new conda environment
+```sh
+conda create -n twodfdr --file=conda_gcc14.yaml
+conda activate twodfdr
+```
+## Install PyCPL and PyEsoRex
+* [Building the twodfdr Python module](https://dev.aao.org.au/rds/2dfdr/2dfdr/-/tree/dev?ref_type=heads#building-the-twodfdr-python-module)
+* [Installing PyCPL and PyEsoRex](https://www.eso.org/sci/software/pycpl/pycpl-site/user/installation.html#installing-pycpl)
+
