@@ -93,6 +93,8 @@ def kspec_make_tlm(params, image, ofname=None, odir=None):
     recipe_name = "kspec_make_tlm"
 
     # --Start reduce_fflat.F95 section--
+    # This does not require any changes for K-SPEC.
+    # This process only check the instcode for the case of IFU.
 
     # This section does the work that is ordinarily done in reduce_fflat
     # since 2dfdr doesn't call make_tlm directly, it calls reduce_fflat with
@@ -107,13 +109,7 @@ def kspec_make_tlm(params, image, ofname=None, odir=None):
     cpl.core.Msg.info(recipe_name, "OUT_DIRNAME={}".format(out_dirname.rstrip()))
 
     # Produce im(age) frame if a tramline map is requested
-    # TODO: make these robust separate Python functions ....
     _twodfdr.make_im__(args=ta.sid, status=status)
-
-    # produce ex(tracted) frame
-    # TODO: make these robust separate Python functions ....
-    # NOT NEEDED
-    # _twodfdr.make_ex(args=ta.sid,status=status)
 
     # --End reduce_fflat.F95 section--
 
@@ -141,7 +137,9 @@ def kspec_make_tlm(params, image, ofname=None, odir=None):
     # Call routine appropriate for instrument to create TLM primary & WAVELA
     # All routines write tramline map into Primary HDU and predicted wavelength
     # array into 'WAVELA' HDU of TLM file TLM_ID
-    TLM.other(timg, tram, instcode, ta)
+    # TODO: This should be replaced with a Python implementation
+    _make_tlm_for_kspec(timg, tram, instcode, ta)
+    # TLM.other(timg, tram, instcode, ta)
 
     # Read tramline data into array TLM
     # npix, nfib = tram.get_size
@@ -226,14 +224,194 @@ def _make_tlm_for_kspec(image, tlm, instcode, targs):
     EXTRACT_PROFILE_SLICE routine. Creates a wavelength array using the
     PREDICT_WAVELEN() routine. All derived data is written to the TLM_ID
     data object.
-    Note: This routine has evolved over a long history and there are
-    still a few aspects that are present for historical reasons and
-    may need updating in the future.
     """
-    status = 0
-    # TODO: turn tlm_id into a proper Tdfio object and return it?
-    _twodfdr.make_tlm_other_mod.make_tlm_other(
-        image.fid, tlm.fid, instcode, targs.sid, status
+    status = np.int32(0)  # Fortran status (0 = DRS__OK)
+
+    # Step 0: Read image data and fiber types
+    nx, ny = image.get_size()
+    img_data = image.read_image()
+    var_data = image.read_variance()
+    fiber_types = image.read_fiber_types()
+    n_fibers = len(fiber_types)
+
+    # Convert fiber types to trace status (similar to Fortran's TRISTATE__YES/NO/MAYBE)
+    fiber_has_trace = np.zeros(n_fibers, dtype=np.int32)
+    for i in range(n_fibers):
+        if fiber_types[i] in [b'P', b'S']:
+            fiber_has_trace[i] = 1  # TRISTATE__YES
+        elif fiber_types[i] in [b'N']:
+            fiber_has_trace[i] = 0  # TRISTATE__NO
+        else:
+            fiber_has_trace[i] = 2  # TRISTATE__MAYBE
+
+    # Count fibers in different states
+    n_officially_inuse = np.sum(fiber_has_trace == 1)
+    n_potentially_able = np.sum(fiber_has_trace == 2)
+    n_officially_dead = np.sum(fiber_has_trace == 0)
+
+    # Step 1: Locate fiber traces
+    trace_array = np.zeros((nx, ny), dtype=np.float32)
+    spatial_slice = np.zeros(ny, dtype=np.float32)
+    peak_positions = np.zeros(ny, dtype=np.float32)
+    n_traces = np.int32(0)
+
+    # Set trace finding parameters from args
+    sparse_fibs = targs.getl("SPARSE_FIBS", False)
+    experimental_fit = targs.getl("TLM_FIT_RES", False)
+    quick_and_dirty = targs.getl("QAD_PKSEARCH", False)
+
+    # Choose peak search method: 0 = standard (Echelle), 1 = alternative (all local peaks)
+    pk_search_method = np.int32(1 if quick_and_dirty else 0)
+
+    # For KSPEC, we'll use distortion modeling
+    do_distortion = True
+
+    # Call locate_traces to find fiber traces
+    _twodfdr.locate_traces(
+        img_data,
+        np.int32(nx),
+        np.int32(ny),
+        trace_array,
+        np.int32(ny),
+        n_traces,
+        np.int32(n_fibers),
+        spatial_slice,
+        peak_positions,
+        np.int32(4),  # ORDER: use quartic (4th order) smoothing for traces
+        sparse_fibs,
+        experimental_fit,
+        pk_search_method,
+        do_distortion,
+        status
+    )
+
+    if status != 0:
+        raise RuntimeError(f"Trace location failed (status={int(status)})")
+
+    # Step 2: Estimate fiber profile widths
+    peak_heights = np.zeros(n_traces, dtype=np.float32)
+    peak_widths = np.zeros(n_traces, dtype=np.float32)
+
+    # Get peak heights from spatial slice
+    for i in range(n_traces):
+        idx = int(np.floor(peak_positions[i] + 0.5))
+        idx = max(0, min(idx, ny-1))
+        peak_heights[i] = spatial_slice[idx]
+
+    # Set PSF type and extract profile
+    psf_type = targs.getc("PSF_TYPE", "GAUSS")
+    ExternalPsf.set_type(psf_type)
+
+    if psf_type == "C2G2L":
+        parse_status = np.int32(0)
+        ExternalPsf.parse(targs, image.ndf_class, parse_status)
+
+    # Extract profile slice and calculate FWHM
+    _twodfdr.extract_profile_slice(
+        spatial_slice,
+        np.int32(ny),
+        peak_positions,
+        peak_heights,
+        n_traces,
+        peak_widths,
+        False
+    )
+
+    # Convert sigma to FWHM
+    peak_widths *= 2.35482
+    mwidth = float(np.median(peak_widths[:n_traces]))
+
+    # Step 3: Identify fibers
+    match_vector = np.zeros(n_fibers, dtype=np.int32)
+
+    # For KSPEC, we'll use a simple gap-based identification
+    # This assumes fibers are roughly equidistant
+    gap_values = np.zeros(n_fibers, dtype=np.float32)
+    gap_values[:] = np.median(np.diff(np.sort(peak_positions[:n_traces])))
+
+    _twodfdr.ident_fibs_from_gaps(
+        np.int32(n_fibers),
+        fiber_types,
+        n_traces,
+        peak_positions,
+        gap_values,
+        match_vector,
+        np.zeros(n_fibers, dtype=np.float32),
+        status
+    )
+
+    # Step 4: Build tramline map
+    tlm_array = np.zeros((nx, n_fibers), dtype=np.float32)
+    n_missing = 0
+
+    for fibno in range(n_fibers):
+        traceno = match_vector[fibno]
+        if traceno == 0:
+            n_missing += 1
+            continue
+        tlm_array[:, fibno] = trace_array[:, traceno-1]  # -1 for 0-based indexing
+
+    # Interpolate missing traces if needed
+    if n_missing > 0:
+        sep_value = _twodfdr.fibre_sep(instcode)
+        _twodfdr.interpolate_tlms(
+            np.int32(nx),
+            np.int32(n_fibers),
+            tlm_array,
+            match_vector,
+            np.float32(sep_value)
+        )
+
+    # Step 5: Write results
+    # Write tramline map
+    _twodfdr.tdfio_tlmap_write(
+        int(tlm),
+        tlm_array,
+        np.int32(nx),
+        np.int32(n_fibers),
+        status
+    )
+
+    # Write FWHM estimate
+    _twodfdr.tdfio_kywd_write_real(
+        int(tlm),
+        "MWIDTH",
+        np.float32(mwidth),
+        "Median spatial FWHM",
+        status
+    )
+
+    # Write PSF type
+    _twodfdr.tdfio_kywd_write_char(
+        int(tlm),
+        "PSF_TYPE",
+        psf_type,
+        "PSF Used to find SIGMAPRF",
+        status
+    )
+
+    # Calculate and write wavelength array
+    wave_array = np.zeros((nx, n_fibers), dtype=np.float32)
+    _twodfdr.predict_wavelen(
+        int(image),
+        np.int32(nx),
+        np.int32(n_fibers),
+        np.int32(ny),
+        tlm_array,
+        wave_array,
+        int(targs),
+        status
+    )
+
+    if status != 0:
+        raise RuntimeError(f"Wavelength prediction failed (status={int(status)})")
+
+    _twodfdr.tdfio_wave_write(
+        int(tlm),
+        wave_array,
+        np.int32(nx),
+        np.int32(n_fibers),
+        status
     )
 
 
